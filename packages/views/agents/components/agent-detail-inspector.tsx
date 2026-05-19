@@ -19,7 +19,7 @@ import {
 } from "@multica/core/agents";
 import { api } from "@multica/core/api";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
-import { timeAgo } from "@multica/core/utils";
+import { isImeComposing, timeAgo } from "@multica/core/utils";
 import { Button } from "@multica/ui/components/ui/button";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { Input } from "@multica/ui/components/ui/input";
@@ -240,7 +240,7 @@ function AvatarEditor({
 
   if (!canEdit) {
     return (
-      <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-muted">
+      <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg">
         <ActorAvatar
           actorType="agent"
           actorId={agent.id}
@@ -271,7 +271,7 @@ function AvatarEditor({
         type="button"
         // rounded-lg matches the standard agent avatar treatment used in
         // list rows. Avoid rounded-full — circles are reserved for humans.
-        className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={() => fileInputRef.current?.click()}
         disabled={uploading}
         aria-label={t(($) => $.inspector.change_avatar_aria)}
@@ -455,7 +455,11 @@ function DescriptionEditorBody({
           placeholder={t(($) => $.inspector.description_placeholder)}
           rows={6}
           onKeyDown={(e) => {
-            if (e.key === "Escape") onClose();
+            if (e.key === "Escape") {
+              onClose();
+              return;
+            }
+            if (isImeComposing(e)) return;
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
               e.preventDefault();
               void commit();
@@ -561,11 +565,14 @@ function InlineEditPopover({
               }}
               placeholder={placeholder}
               onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  setOpen(false);
+                  return;
+                }
+                if (isImeComposing(e)) return;
                 if (e.key === "Enter") {
                   e.preventDefault();
                   void commit();
-                } else if (e.key === "Escape") {
-                  setOpen(false);
                 }
               }}
               className="h-8"
@@ -580,7 +587,11 @@ function InlineEditPopover({
               }}
               placeholder={placeholder}
               onKeyDown={(e) => {
-                if (e.key === "Escape") setOpen(false);
+                if (e.key === "Escape") {
+                  setOpen(false);
+                  return;
+                }
+                if (isImeComposing(e)) return;
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                   e.preventDefault();
                   void commit();

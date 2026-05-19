@@ -22,6 +22,7 @@ import {
 } from "@multica/core/inbox/mutations";
 
 import { IssueDetail } from "../../issues/components";
+import { ErrorBoundary } from "@multica/ui/components/common/error-boundary";
 import { useNavigation } from "../../navigation";
 import { toast } from "sonner";
 import {
@@ -135,7 +136,12 @@ export function InboxPage() {
   useEffect(() => {
     if (!selectedId || selectedRead) return;
     markReadMutate(selectedId, {
-      onError: () => toast.error(t(($) => $.errors.mark_read_failed)),
+      onError: (err) =>
+        toast.error(
+          err instanceof Error && err.message
+            ? err.message
+            : t(($) => $.errors.mark_read_failed),
+        ),
     });
   }, [selectedId, selectedRead, markReadMutate, t]);
 
@@ -144,24 +150,48 @@ export function InboxPage() {
   };
 
   const handleArchive = (id: string) => {
-    const archived = items.find((i) => i.id === id);
-    if (archived && (archived.issue_id ?? archived.id) === selectedKey) setSelectedKey("");
+    const idx = items.findIndex((i) => i.id === id);
+    const archived = idx >= 0 ? items[idx] : null;
+    const wasSelected =
+      !!archived && (archived.issue_id ?? archived.id) === selectedKey;
+    if (wasSelected) {
+      // List is sorted newest-first; prefer the next (older) item, fall back
+      // to the previous (newer) one when archiving at the bottom, and only
+      // clear the selection when nothing else is left.
+      const next = items[idx + 1] ?? items[idx - 1] ?? null;
+      setSelectedKey(next ? (next.issue_id ?? next.id) : "");
+    }
     archiveMutation.mutate(id, {
-      onError: () => toast.error(t(($) => $.errors.archive_failed)),
+      onError: (err) =>
+        toast.error(
+          err instanceof Error && err.message
+            ? err.message
+            : t(($) => $.errors.archive_failed),
+        ),
     });
   };
 
   // Batch operations
   const handleMarkAllRead = () => {
     markAllReadMutation.mutate(undefined, {
-      onError: () => toast.error(t(($) => $.errors.mark_all_read_failed)),
+      onError: (err) =>
+        toast.error(
+          err instanceof Error && err.message
+            ? err.message
+            : t(($) => $.errors.mark_all_read_failed),
+        ),
     });
   };
 
   const handleArchiveAll = () => {
     setSelectedKey("");
     archiveAllMutation.mutate(undefined, {
-      onError: () => toast.error(t(($) => $.errors.archive_all_failed)),
+      onError: (err) =>
+        toast.error(
+          err instanceof Error && err.message
+            ? err.message
+            : t(($) => $.errors.archive_all_failed),
+        ),
     });
   };
 
@@ -169,14 +199,24 @@ export function InboxPage() {
     const readKeys = items.filter((i) => i.read).map((i) => i.issue_id ?? i.id);
     if (readKeys.includes(selectedKey)) setSelectedKey("");
     archiveAllReadMutation.mutate(undefined, {
-      onError: () => toast.error(t(($) => $.errors.archive_all_read_failed)),
+      onError: (err) =>
+        toast.error(
+          err instanceof Error && err.message
+            ? err.message
+            : t(($) => $.errors.archive_all_read_failed),
+        ),
     });
   };
 
   const handleArchiveCompleted = () => {
     setSelectedKey("");
     archiveCompletedMutation.mutate(undefined, {
-      onError: () => toast.error(t(($) => $.errors.archive_completed_failed)),
+      onError: (err) =>
+        toast.error(
+          err instanceof Error && err.message
+            ? err.message
+            : t(($) => $.errors.archive_completed_failed),
+        ),
     });
   };
 
@@ -251,26 +291,25 @@ export function InboxPage() {
     // new inbox notification for the same issue, and the dedup helper picks the
     // newest one — keying on its id would remount IssueDetail on every event,
     // wiping the comment composer draft and resetting scroll position.
-    <IssueDetail
-      key={selected.issue_id}
-      issueId={selected.issue_id}
-      defaultSidebarOpen={false}
-      layoutId="multica_inbox_issue_detail_layout"
-      highlightCommentId={selected.details?.comment_id ?? undefined}
-      onDelete={() => {
-        // Issue deletion CASCADE-deletes the inbox item server-side, and the
-        // issue:deleted WS event prunes it from the inbox cache. Just clear
-        // the selection — calling archive here would 404 on a row that no
-        // longer exists.
-        setSelectedKey("");
-      }}
-      onDone={() => {
-        setSelectedKey("");
-        archiveMutation.mutate(selected.id, {
-          onError: () => toast.error(t(($) => $.errors.archive_failed)),
-        });
-      }}
-    />
+    <ErrorBoundary resetKeys={[selected.issue_id]}>
+      <IssueDetail
+        key={selected.issue_id}
+        issueId={selected.issue_id}
+        defaultSidebarOpen={false}
+        layoutId="multica_inbox_issue_detail_layout"
+        highlightCommentId={selected.details?.comment_id ?? undefined}
+        onDelete={() => {
+          // Issue deletion CASCADE-deletes the inbox item server-side, and the
+          // issue:deleted WS event prunes it from the inbox cache. Just clear
+          // the selection — calling archive here would 404 on a row that no
+          // longer exists.
+          setSelectedKey("");
+        }}
+        onDone={() => {
+          handleArchive(selected.id);
+        }}
+      />
+    </ErrorBoundary>
   ) : selected ? (
     <div className="p-6">
       <h2 className="text-lg font-semibold">{getInboxDisplayTitle(selected)}</h2>

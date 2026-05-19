@@ -1,9 +1,14 @@
 "use client";
 
+import { useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   ArrowDown,
   ArrowUp,
   Calendar,
+  CalendarClock,
+  FolderOpen,
   Link2,
   MoreHorizontal,
   Pin,
@@ -12,15 +17,16 @@ import {
   Trash2,
   UserMinus,
 } from "lucide-react";
-import type { Issue } from "@multica/core/types";
+import type { AgentTask, Issue } from "@multica/core/types";
+import { api } from "@multica/core/api";
 import {
   ALL_STATUSES,
   PRIORITY_ORDER,
   PRIORITY_CONFIG,
 } from "@multica/core/issues/config";
+import { issueKeys } from "@multica/core/issues/queries";
 import { StatusIcon } from "../components/status-icon";
 import { PriorityIcon } from "../components/priority-icon";
-import { ActorAvatar } from "../../common/actor-avatar";
 import {
   DropdownMenuItem,
   DropdownMenuSub,
@@ -72,6 +78,11 @@ interface IssueActionsMenuItemsProps {
   issue: Issue;
   actions: UseIssueActionsResult;
   primitives: MenuPrimitives;
+  /** Called when the user clicks the Assignee menu item. The parent should
+   *  close the surrounding menu and open the shared `AssigneePicker` popover.
+   *  Decoupled this way so the same item can drive both the dropdown
+   *  (3-dot button) and the context menu (right-click) wrappers. */
+  onOpenAssignee: () => void;
   /** If set, navigate here after the issue is deleted (used by the detail page). */
   onDeletedNavigateTo?: string;
 }
@@ -80,12 +91,11 @@ export function IssueActionsMenuItems({
   issue,
   actions,
   primitives: P,
+  onOpenAssignee,
   onDeletedNavigateTo,
 }: IssueActionsMenuItemsProps) {
   const { t } = useT("issues");
   const {
-    members,
-    agents,
     isPinned,
     updateField,
     togglePin,
@@ -102,6 +112,37 @@ export function IssueActionsMenuItems({
     d.setDate(d.getDate() + days);
     return d.toISOString();
   };
+
+  // Subscribe to the issue's task list so the cache is warm by the time the
+  // user clicks "Copy local workdir path". The query only fires while the
+  // menu is open (Base UI portals the menu content lazily) — list views
+  // that wrap every row in IssueActionsContextMenu pay nothing until the
+  // menu actually opens.
+  //
+  // The query shares its key with ExecutionLogSection, so navigating from
+  // the issue detail page is a free cache hit.
+  const { data: tasks } = useQuery({
+    queryKey: issueKeys.tasks(issue.id),
+    queryFn: () => api.listTasksByIssue(issue.id),
+    staleTime: 30_000,
+  });
+
+  // Synchronous click handler — the awaited fetch in the previous version
+  // dropped the browser's transient user activation, which made
+  // navigator.clipboard.writeText() reject from the menu when the cache
+  // was cold. We now read straight from the cached query result and write
+  // to the clipboard inside the same task as the click.
+  const handleCopyWorkdirPath = useCallback(() => {
+    const latestWorkDir = pickLatestWorkDir(tasks);
+    if (!latestWorkDir) {
+      toast.error(t(($) => $.detail.workdir_path_unavailable));
+      return;
+    }
+    navigator.clipboard.writeText(latestWorkDir).then(
+      () => toast.success(t(($) => $.detail.workdir_path_copied)),
+      () => toast.error(t(($) => $.detail.workdir_path_copy_failed)),
+    );
+  }, [tasks, t]);
 
   return (
     <>
@@ -147,53 +188,40 @@ export function IssueActionsMenuItems({
         </P.SubContent>
       </P.Sub>
 
-      {/* Assignee */}
+      {/* Assignee — closes this menu and hands off to the shared
+          AssigneePicker (members + agents + squads, with search and
+          permission checks). Keeps a single source of truth for the
+          assignee UX across detail sidebar, board cards, and right-click /
+          3-dot menus. */}
+      <P.Item onClick={onOpenAssignee}>
+        <UserMinus className="h-3.5 w-3.5" />
+        {t(($) => $.actions.assignee)}
+      </P.Item>
+
+      {/* Start date */}
       <P.Sub>
         <P.SubTrigger>
-          <UserMinus className="h-3.5 w-3.5" />
-          {t(($) => $.actions.assignee)}
+          <CalendarClock className="h-3.5 w-3.5" />
+          {t(($) => $.actions.start_date)}
         </P.SubTrigger>
         <P.SubContent>
-          <P.Item
-            onClick={() =>
-              updateField({ assignee_type: null, assignee_id: null })
-            }
-          >
-            <UserMinus className="h-3.5 w-3.5 text-muted-foreground" />
-            {t(($) => $.actions.unassigned)}
-            {!issue.assignee_type && (
-              <span className="ml-auto text-xs text-muted-foreground">{"✓"}</span>
-            )}
+          <P.Item onClick={() => updateField({ start_date: now().toISOString() })}>
+            {t(($) => $.actions.start_today)}
           </P.Item>
-          {members.map((m) => (
-            <P.Item
-              key={m.user_id}
-              onClick={() =>
-                updateField({ assignee_type: "member", assignee_id: m.user_id })
-              }
-            >
-              <ActorAvatar actorType="member" actorId={m.user_id} size={16} />
-              {m.name}
-              {issue.assignee_type === "member" &&
-                issue.assignee_id === m.user_id && (
-                  <span className="ml-auto text-xs text-muted-foreground">{"✓"}</span>
-                )}
-            </P.Item>
-          ))}
-          {agents.map((a) => (
-            <P.Item
-              key={a.id}
-              onClick={() =>
-                updateField({ assignee_type: "agent", assignee_id: a.id })
-              }
-            >
-              <ActorAvatar actorType="agent" actorId={a.id} size={16} />
-              {a.name}
-              {issue.assignee_type === "agent" && issue.assignee_id === a.id && (
-                <span className="ml-auto text-xs text-muted-foreground">{"✓"}</span>
-              )}
-            </P.Item>
-          ))}
+          <P.Item onClick={() => updateField({ start_date: inDays(1) })}>
+            {t(($) => $.actions.start_tomorrow)}
+          </P.Item>
+          <P.Item onClick={() => updateField({ start_date: inDays(7) })}>
+            {t(($) => $.actions.start_next_week)}
+          </P.Item>
+          {issue.start_date && (
+            <>
+              <P.Separator />
+              <P.Item onClick={() => updateField({ start_date: null })}>
+                {t(($) => $.actions.start_clear)}
+              </P.Item>
+            </>
+          )}
         </P.SubContent>
       </P.Sub>
 
@@ -238,6 +266,10 @@ export function IssueActionsMenuItems({
         <Link2 className="h-3.5 w-3.5" />
         {t(($) => $.actions.copy_link)}
       </P.Item>
+      <P.Item onClick={handleCopyWorkdirPath}>
+        <FolderOpen className="h-3.5 w-3.5" />
+        {t(($) => $.actions.copy_workdir_path)}
+      </P.Item>
 
       <P.Separator />
 
@@ -275,4 +307,16 @@ export function IssueActionsMenuItems({
       </P.Item>
     </>
   );
+}
+
+function pickLatestWorkDir(tasks: AgentTask[] | undefined): string | undefined {
+  if (!tasks?.length) return undefined;
+  let latest: AgentTask | undefined;
+  for (const task of tasks) {
+    if (!task.work_dir) continue;
+    if (!latest || task.created_at > latest.created_at) {
+      latest = task;
+    }
+  }
+  return latest?.work_dir;
 }

@@ -58,6 +58,7 @@ export function StepRuntimeConnect({
 
   return (
     <FancyView
+      wsId={wsId}
       runtimes={runtimes}
       selected={selected}
       selectedId={selectedId}
@@ -79,6 +80,7 @@ type Phase = "scanning" | "found" | "empty";
 const EMPTY_TIMEOUT_MS = 5000;
 
 function FancyView({
+  wsId,
   runtimes,
   selected,
   selectedId,
@@ -87,6 +89,7 @@ function FancyView({
   onBack,
   onWaitlistSubmitted,
 }: {
+  wsId: string;
   runtimes: AgentRuntime[];
   selected: AgentRuntime | null;
   selectedId: string | null;
@@ -142,7 +145,9 @@ function FancyView({
     const detectMs = Math.round(now - (detectStartRef.current ?? now));
 
     captureEvent("onboarding_runtime_detected", {
-      source: "step3_desktop",
+      source: "onboarding",
+      surface: "step3_desktop",
+      workspace_id: wsId,
       outcome: phase,
       runtime_count: runtimes.length,
       online_count: onlineCount,
@@ -443,6 +448,15 @@ function EmptyView({
         />
       </div>
 
+      <a
+        href="https://multica.ai/docs/install-agent-runtime"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-5 inline-block self-start text-[13px] text-muted-foreground underline underline-offset-4 transition-colors hover:text-foreground"
+      >
+        {t(($) => $.step_runtime.empty_install_link)}
+      </a>
+
       <Dialog
         open={waitlistOpen}
         onOpenChange={(o) => (o ? null : setWaitlistOpen(false))}
@@ -597,4 +611,3 @@ function RadioMark({ selected }: { selected: boolean }) {
     </span>
   );
 }
-

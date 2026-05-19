@@ -17,6 +17,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import type { Skill } from "@multica/core/types";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { isImeComposing } from "@multica/core/utils";
 import {
   skillDetailOptions,
   workspaceKeys,
@@ -40,6 +41,7 @@ import { cn } from "@multica/ui/lib/utils";
 import { openExternal } from "../../platform";
 import { RuntimeLocalSkillImportPanel } from "./runtime-local-skill-import-panel";
 import { useT } from "../../i18n";
+import { isNameConflictError } from "../lib/utils";
 
 type Method = "chooser" | "manual" | "url" | "runtime";
 
@@ -51,10 +53,6 @@ function seedAfterCreate(
   qc.setQueryData(skillDetailOptions(wsId, skill.id).queryKey, skill);
   qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId) });
   qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
-}
-
-function isNameConflictError(msg: string): boolean {
-  return /\b(409|conflict|already exists|unique constraint)\b/i.test(msg);
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +161,7 @@ function ManualForm({
             }}
             placeholder={t(($) => $.create.manual.name_placeholder)}
             onKeyDown={(e) => {
+              if (isImeComposing(e)) return;
               if (e.key === "Enter") submit();
             }}
           />
@@ -239,12 +238,13 @@ function ManualForm({
 // URL import form
 // ---------------------------------------------------------------------------
 
-type DetectedSource = "clawhub" | "skills.sh" | null;
+type DetectedSource = "clawhub" | "skills.sh" | "github" | null;
 
 function detectUrlSource(url: string): DetectedSource {
   const u = url.trim().toLowerCase();
   if (u.includes("clawhub.ai")) return "clawhub";
   if (u.includes("skills.sh")) return "skills.sh";
+  if (u.includes("github.com")) return "github";
   return null;
 }
 
@@ -314,6 +314,7 @@ function UrlForm({
     if (!loading) return t(($) => $.create.url.import);
     if (source === "clawhub") return t(($) => $.create.url.importing_clawhub);
     if (source === "skills.sh") return t(($) => $.create.url.importing_skills_sh);
+    if (source === "github") return t(($) => $.create.url.importing_github);
     return t(($) => $.create.url.importing);
   })();
 
@@ -348,7 +349,7 @@ function UrlForm({
           <p className="mb-2 text-xs text-muted-foreground">
             {t(($) => $.create.url.supported_sources)}
           </p>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <SourceCard
               label="ClawHub"
               exampleHost="clawhub.ai/owner/skill"
@@ -360,6 +361,12 @@ function UrlForm({
               exampleHost="skills.sh/owner/repo/skill"
               browseUrl="https://skills.sh"
               active={source === "skills.sh"}
+            />
+            <SourceCard
+              label="GitHub"
+              exampleHost="github.com/owner/repo"
+              browseUrl="https://github.com"
+              active={source === "github"}
             />
           </div>
         </div>
@@ -507,7 +514,10 @@ export function CreateSkillDialog({
           />
         )}
         {method === "runtime" && (
-          <RuntimeLocalSkillImportPanel onImported={handleCreated} />
+          <RuntimeLocalSkillImportPanel
+            onImported={handleCreated}
+            onBulkDone={onClose}
+          />
         )}
       </DialogContent>
     </Dialog>

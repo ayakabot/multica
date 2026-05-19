@@ -18,11 +18,13 @@ import { workspaceKeys } from "@multica/core/workspace/queries";
 import { useAuthStore } from "@multica/core/auth";
 import { canAssignAgentToIssue } from "@multica/core/permissions";
 import { api } from "@multica/core/api";
+import { isImeComposing } from "@multica/core/utils";
 import type {
   Issue,
   ListIssuesCache,
   MemberWithUser,
   Agent,
+  Squad,
 } from "@multica/core/types";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { StatusIcon } from "../../issues/components/status-icon";
@@ -35,6 +37,7 @@ import {
   recordMentionUsage,
   sortUserItemsByRecency,
 } from "./mention-recency";
+import { matchesPinyin } from "./pinyin-match";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -43,7 +46,7 @@ import {
 export interface MentionItem {
   id: string;
   label: string;
-  type: "member" | "agent" | "issue" | "all";
+  type: "member" | "agent" | "squad" | "issue" | "all";
   /** Secondary text shown beside the label (e.g. issue title) */
   description?: string;
   /** Issue status for StatusIcon rendering */
@@ -204,6 +207,9 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
 
     useImperativeHandle(ref, () => ({
       onKeyDown: ({ event }) => {
+        // IME is composing — don't intercept Enter/Arrow as picker actions;
+        // those keys belong to the IME (Enter commits composition, etc).
+        if (isImeComposing(event)) return false;
         if (event.key === "ArrowUp") {
           if (displayItems.length === 0) return true;
           setSelectedIndex(
@@ -340,6 +346,11 @@ function MentionRow({
         // eslint-disable-next-line i18next/no-literal-string
         <Badge variant="outline" className="ml-auto text-[10px] h-4 px-1.5">Agent</Badge>
       )}
+      {item.type === "squad" && (
+        // "Squad" is a glossary-protected product term — kept un-translated.
+        // eslint-disable-next-line i18next/no-literal-string
+        <Badge variant="outline" className="ml-auto text-[10px] h-4 px-1.5">Squad</Badge>
+      )}
     </button>
   );
 }
@@ -376,6 +387,7 @@ export function createMentionSuggestion(qc: QueryClient): Omit<
 
     const members: MemberWithUser[] = qc.getQueryData(workspaceKeys.members(wsId)) ?? [];
     const agents: Agent[] = qc.getQueryData(workspaceKeys.agents(wsId)) ?? [];
+    const squads: Squad[] = qc.getQueryData(workspaceKeys.squads(wsId)) ?? [];
     const cachedResponse = qc.getQueryData<ListIssuesCache>(issueKeys.list(wsId));
     const cachedIssues: Issue[] = cachedResponse ? flattenIssueBuckets(cachedResponse) : [];
 
@@ -396,7 +408,7 @@ export function createMentionSuggestion(qc: QueryClient): Omit<
         : [];
 
     const memberItems: MentionItem[] = members
-      .filter((m) => m.name.toLowerCase().includes(q))
+      .filter((m) => m.name.toLowerCase().includes(q) || matchesPinyin(m.name, q))
       .map((m) => ({
         id: m.user_id,
         label: m.name,
@@ -407,17 +419,21 @@ export function createMentionSuggestion(qc: QueryClient): Omit<
       .filter(
         (a) =>
           !a.archived_at &&
-          a.name.toLowerCase().includes(q) &&
+          (a.name.toLowerCase().includes(q) || matchesPinyin(a.name, q)) &&
           canAssignAgentToIssue(a, { userId, role: myRole }).allowed,
       )
       .map((a) => ({ id: a.id, label: a.name, type: "agent" as const }));
+
+    const squadItems: MentionItem[] = squads
+      .filter((s) => !s.archived_at && (s.name.toLowerCase().includes(q) || matchesPinyin(s.name, q)))
+      .map((s) => ({ id: s.id, label: s.name, type: "squad" as const }));
 
     // Members and agents share a single ranked list — recently mentioned
     // targets come first regardless of type, with an alphabetical fallback
     // for everyone the user hasn't mentioned yet on this device.
     const recency = getRecencyMap(wsId);
     const userItems = sortUserItemsByRecency(
-      [...memberItems, ...agentItems],
+      [...memberItems, ...agentItems, ...squadItems],
       recency,
     );
 
